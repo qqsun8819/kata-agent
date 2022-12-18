@@ -126,6 +126,16 @@ message ListProcessesRequest {
 	repeated string args = 3;
 }
 
+
+message PullImageRequest {
+    // Image name (e.g. docker.io/library/busybox:latest).
+    string image = 1;
+    // Unique image identifier, used to avoid duplication when unpacking the image layers.
+    string container_id = 2;
+    string source_creds = 3;
+}
+
+
 // ListProcessesResponse represents the list of running processes inside the container
 message ListProcessesResponse {
 	bytes process_list = 1;

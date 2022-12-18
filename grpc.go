@@ -713,6 +713,155 @@ func (a *agentGRPC) CreateContainer(ctx context.Context, req *pb.CreateContainer
 	return a.finishCreateContainer(ctr, req, config)
 }
 
+const (
+	SKOPEO_PATH            = "/usr/local/bin/skopeo"
+	UMOCI_PATH             = "/usr/local/bin/umoci"
+	IMAGE_OCI              = "image_oci"
+	AA_PATH                = "/usr/local/bin/attestation-agent"
+	AA_KEYPROVIDER_PORT    = "127.0.0.1:50000"
+	AA_GETRESOURCE_PORT    = "127.0.0.1:50001"
+	OCICRYPT_CONFIG_PATH   = "/tmp/ocicrypt_config.json"
+	KATA_CC_IMAGE_WORK_DIR = "/run/image/"
+	KATA_CC_PAUSE_BUNDLE   = "/pause_bundle"
+	CONFIG_JSON            = "config.json"
+	CONTAINER_BASE         = "/run/kata-containers"
+)
+
+type AttestationAgentConfig struct {
+	AAKeyPort string `json:"grpc"`
+}
+
+type KeyProviders struct {
+	AttesAgentConfig AttestationAgentConfig `json:"attestation-agent"`
+}
+
+type OcicryptConfig struct {
+	KeyProv KeyProviders `json:"key-providers"`
+}
+
+func (a *agentGRPC) PullImageAttensation(pull_image_req *pb.PullImageRequest) error {
+	os.Setenv("OCICRYPT_KEYPROVIDER_CONFIG", OCICRYPT_CONFIG_PATH)
+
+	cid := "6da69100df085ce97ea9a8b0de5f83ce4e6f2f4bc07d8a36888e31f18f870508"
+	image := "docker.io/zhouliang121/alpine-84688df7-2c0c-40fa-956b-29d8e74d16c1-gcm:latest"
+
+	v := strings.Split(image, "/")
+	if len(v[len(v)-1]) > 0 && strings.HasSuffix(v[len(v)-1], "pause:") {
+		return nil
+	}
+
+	aaKbcParams := "sample_kbc::84688df7-2c0c-40fa-956b-29d8e74d16c0"
+	if len(aaKbcParams) > 0 {
+		if err := a.initAttestationAgent(); err != nil {
+			fmt.Println("Error:The command is err,", err)
+			return err
+		}
+	}
+
+	if err := a.pullImageFromRegistry(image, cid, aaKbcParams); err != nil {
+
+		fmt.Println("pull image error", err)
+		return err
+	}
+
+	if err := a.unpackImage(cid); err != nil {
+		fmt.Println("unpacke image error", err)
+		return err
+	}
+	return nil
+}
+
+func (a *agentGRPC) initAttestationAgent() error {
+
+	configPath := OCICRYPT_CONFIG_PATH
+
+	// The image will need to be encrypted using a keyprovider
+	// that has the same name (at least according to the config).
+
+	ocicryptConfig := &OcicryptConfig{
+		KeyProv: KeyProviders{
+			AttesAgentConfig: AttestationAgentConfig{AAKeyPort: AA_KEYPROVIDER_PORT},
+		},
+	}
+	ociCfgStr, _ := json.Marshal(ocicryptConfig)
+	fmt.Println(string(ociCfgStr))
+
+	file, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE, 0666)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	write := bufio.NewWriter(file)
+	write.WriteString(string(ociCfgStr))
+	write.Flush()
+
+	cmd := exec.Command(AA_PATH,
+		"--keyprovider_sock",
+		AA_KEYPROVIDER_PORT,
+		"--getresource_sock",
+		AA_GETRESOURCE_PORT)
+	return cmd.Start()
+
+}
+
+func (a *agentGRPC) pullImageFromRegistry(image string, cid string, aa_kbc_params string) error {
+	sourceImage := fmt.Sprintf("%s%s", "docker://", image)
+	tmpCidPath := filepath.Join("/tmp/", cid)
+	ociPath := filepath.Join(tmpCidPath, IMAGE_OCI)
+	targetPathOci := fmt.Sprintf("oci://%s:latest", ociPath)
+
+	err := os.MkdirAll(ociPath, 0750)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command(SKOPEO_PATH)
+	cmd.Args = append(cmd.Args, "copy")
+	cmd.Args = append(cmd.Args, sourceImage)
+	cmd.Args = append(cmd.Args, targetPathOci)
+	cmd.Args = append(cmd.Args, "--remove-signatures")
+	cmd.Args = append(cmd.Args, "--insecure-policy")
+
+	if len(aa_kbc_params) > 0 {
+		// Skopeo will copy an unencrypted image even if the decryption key argument is provided.
+		// Thus, this does not guarantee that the image was encrypted.
+		cmd.Args = append(cmd.Args, "--decryption-key")
+		cmd.Args = append(cmd.Args, fmt.Sprintf("provider:attestation-agent:%s", aa_kbc_params))
+	}
+
+	fmt.Println("pull command", cmd)
+	cmd.Env = os.Environ()
+	cmd.Env = append(cmd.Env, fmt.Sprintf("OCICRYPT_KEYPROVIDER_CONFIG=%s", OCICRYPT_CONFIG_PATH))
+
+	err = cmd.Run()
+	if err != nil {
+
+		os.RemoveAll(tmpCidPath)
+		return err
+	}
+	return nil
+}
+
+func (a *agentGRPC) unpackImage(cid string) error {
+	tmpCidPath := filepath.Join("/tmp/", cid)
+	sourcePathOci := filepath.Join(tmpCidPath, IMAGE_OCI)
+	targetPathBundle := filepath.Join(CONTAINER_BASE, cid)
+
+	cmd := exec.Command(UMOCI_PATH)
+	cmd.Args = append(cmd.Args, "unpack")
+	cmd.Args = append(cmd.Args, "--image")
+	cmd.Args = append(cmd.Args, sourcePathOci)
+	cmd.Args = append(cmd.Args, targetPathBundle)
+
+	fmt.Println("unpack cmd", cmd)
+	err := cmd.Run()
+	if err != nil {
+		return err
+	}
+	os.RemoveAll(tmpCidPath)
+	return nil
+}
+
 // Path overridden in unit tests
 var procSysDir = "/proc/sys"
 

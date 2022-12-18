@@ -7,7 +7,7 @@
 # It includes some useful tools for development of agent
 # which can ensure everyone using similar development toolkit
 
-FROM centos:8
+FROM centos:7
 
 ARG http_proxy
 ARG https_proxy

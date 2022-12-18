@@ -60,6 +60,8 @@ service AgentService {
 	rpc MemHotplugByProbe(MemHotplugByProbeRequest) returns (google.protobuf.Empty);
 	rpc SetGuestDateTime(SetGuestDateTimeRequest) returns (google.protobuf.Empty);
 	rpc CopyFile(CopyFileRequest) returns (google.protobuf.Empty);
+
+	rpc PullImageAttestation(PullImageRequest) returns (PullImageResponse);
 }
 
 message CreateContainerRequest {
@@ -135,6 +137,11 @@ message PullImageRequest {
     string source_creds = 3;
 }
 
+message PullImageResponse {
+    // Reference to the image in use. For most runtimes, this should be an
+    // image ID or digest.
+    string image_ref = 1;
+}
 
 // ListProcessesResponse represents the list of running processes inside the container
 message ListProcessesResponse {

@@ -739,36 +739,41 @@ type OcicryptConfig struct {
 	KeyProv KeyProviders `json:"key-providers"`
 }
 
-func (a *agentGRPC) PullImageAttensation(pull_image_req *pb.PullImageRequest) error {
+func (a *agentGRPC) PullImageAttestation(ctx context.Context, req *pb.PullImageRequest) (*pb.PullImageResponse, error) {
+	var resp pb.PullImageResponse
 	os.Setenv("OCICRYPT_KEYPROVIDER_CONFIG", OCICRYPT_CONFIG_PATH)
 
-	cid := "6da69100df085ce97ea9a8b0de5f83ce4e6f2f4bc07d8a36888e31f18f870508"
-	image := "docker.io/zhouliang121/alpine-84688df7-2c0c-40fa-956b-29d8e74d16c1-gcm:latest"
+	//cid := "6da69100df085ce97ea9a8b0de5f83ce4e6f2f4bc07d8a36888e31f18f870508"
+	//image := "docker.io/zhouliang121/alpine-84688df7-2c0c-40fa-956b-29d8e74d16c1-gcm:latest"
 
+	cid := req.ContainerId
+	image := req.Image
 	v := strings.Split(image, "/")
 	if len(v[len(v)-1]) > 0 && strings.HasSuffix(v[len(v)-1], "pause:") {
-		return nil
+		return &resp, nil
 	}
 
-	aaKbcParams := "sample_kbc::84688df7-2c0c-40fa-956b-29d8e74d16c0"
+	//aaKbcParams := "sample_kbc::84688df7-2c0c-40fa-956b-29d8e74d16c0"
+	aaKbcParams := req.SourceCreds
 	if len(aaKbcParams) > 0 {
 		if err := a.initAttestationAgent(); err != nil {
 			fmt.Println("Error:The command is err,", err)
-			return err
+			return nil, err
 		}
 	}
 
 	if err := a.pullImageFromRegistry(image, cid, aaKbcParams); err != nil {
 
 		fmt.Println("pull image error", err)
-		return err
+		return nil, err
 	}
 
 	if err := a.unpackImage(cid); err != nil {
 		fmt.Println("unpacke image error", err)
-		return err
+		return nil, err
 	}
-	return nil
+	resp.ImageRef = image
+	return &resp, nil
 }
 
 func (a *agentGRPC) initAttestationAgent() error {
